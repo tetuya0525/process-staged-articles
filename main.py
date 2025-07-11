@@ -1,7 +1,7 @@
 # ==============================================================================
 # Memory Library - Process Staged Articles Service
 # Role:         Receives tasks, analyzes articles, and passes them to the next service.
-# Version:      1.1 (Final Pipeline Integration)
+# Version:      1.2 (Lazy Initialization / Stable)
 # Author:       心理 (Thinking Partner)
 # Last Updated: 2025-07-11
 # ==============================================================================
@@ -19,16 +19,12 @@ logging.basicConfig(level=logging.INFO)
 # Flaskアプリケーションを初期化
 app = Flask(__name__)
 
-# 環境変数を読み込む
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
-# 次のステップ（編纂）のためのPub/SubトピックID
-INTEGRATE_TOPIC_ID = os.environ.get('INTEGRATE_ARTICLE_TOPIC_ID')
-
-# FirestoreとPub/Subクライアントの遅延初期化
+# グローバル変数としてクライアントを保持 (遅延初期化のためNoneで開始)
 db = None
 publisher = None
 
 def get_firestore_client():
+    """Firestoreクライアントをシングルトンとして取得・初期化する"""
     global db
     if db is None:
         try:
@@ -40,6 +36,7 @@ def get_firestore_client():
     return db
 
 def get_pubsub_publisher():
+    """Pub/Sub Publisherクライアントをシングルトンとして取得・初期化する"""
     global publisher
     if publisher is None:
         try:
@@ -51,9 +48,15 @@ def get_pubsub_publisher():
 
 @app.route('/', methods=['POST'])
 def process_pubsub_message():
+    # 必要なクライアントを取得 (ここで初めて初期化が試みられる)
     db_client = get_firestore_client()
     pubsub_publisher = get_pubsub_publisher()
 
+    # 環境変数を取得
+    PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+    INTEGRATE_TOPIC_ID = os.environ.get('INTEGRATE_ARTICLE_TOPIC_ID')
+
+    # 依存関係のチェック
     if not all([db_client, pubsub_publisher, PROJECT_ID, INTEGRATE_TOPIC_ID]):
         app.logger.error("A critical component or environment variable is missing.")
         return "Internal Server Error", 500
@@ -91,13 +94,11 @@ def process_pubsub_message():
         doc_ref.update(update_data)
         app.logger.info(f"Successfully processed and updated document {doc_id}.")
 
-        # ★★★【最重要アップグレード】次のパイプラインを呼び出す ★★★
-        # 処理が完了したドキュメントIDを、次のトピックに発行する
+        # 次のパイプラインを呼び出す
         topic_path = pubsub_publisher.topic_path(PROJECT_ID, INTEGRATE_TOPIC_ID)
         future = pubsub_publisher.publish(topic_path, doc_id.encode('utf-8'))
-        future.result() # 発行が完了するまで待機
+        future.result()
         app.logger.info(f"Published document {doc_id} to topic {INTEGRATE_TOPIC_ID} for integration.")
-        # ★★★ アップグレードここまで ★★★
 
         return "Success", 204
 
