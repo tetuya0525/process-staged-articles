@@ -1,26 +1,25 @@
 # ==============================================================================
-# Memory Library - Process Staged Articles Service
-# Dockerfile
+# Dockerfile for Process Staged Articles Service (v2.2)
 # ==============================================================================
-
-# ベースイメージとして公式のPython 3.12スリム版を使用
 FROM python:3.12-slim
 
-# 環境変数
 ENV PYTHONUNBUFFERED True
 ENV APP_HOME /app
-ENV PORT 8080
-
-# 作業ディレクトリを作成して設定
 WORKDIR $APP_HOME
 
-# 要件ファイルをコピーしてインストール
+# 依存関係を先にインストール（root権限）
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# アプリケーションのソースコードをコピー
-COPY main.py .
+# 非rootユーザーを作成し、切り替え
+RUN adduser --system --group appuser
+USER appuser
 
-# コンテナ起動時に実行するコマンドを設定
-# GunicornをWebサーバーとして使用し、main.py内の'app'オブジェクトを実行
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
+# ソースコードをコピー
+COPY . .
+
+# Cloud RunのPORT環境変数を設定
+ENV PORT 8080
+
+# ★ エントリーポイントをアプリケーションファクトリ`create_app()`を呼び出すように修正
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "main:create_app()"]
